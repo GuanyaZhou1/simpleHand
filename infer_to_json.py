@@ -12,7 +12,7 @@ from cfg import _CONFIG
 from hand_net import HandNet
 from eval_datataset import HandMeshEvalDataset
 from utils import get_log_model_dir
-
+from torch import Tensor
 from scipy.linalg import orthogonal_procrustes
 import open3d as o3d
 import numpy as np
@@ -169,12 +169,78 @@ def align_w_scale(mtx1, mtx2, return_trafo=False):
         return R, s, s1, t1 - t2
     else:
         return mtx2_t
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+import numpy as np
+import os
+from PIL import Image
+import torchvision.transforms as transforms
+joint_connections = [
+    [0, 1], [1, 2], [2, 3], [3, 4],  # 拇指
+    [0, 5], [5, 6], [6, 7], [7, 8],  # 食指
+    [0, 9], [9, 10], [10, 11], [11, 12],  # 中指
+    [0, 13], [13, 14], [14, 15], [15, 16],  # 无名指
+    [0, 17], [17, 18], [18, 19], [19, 20],  # 小指
+    [5, 9], [9, 13], [13, 17]  # 手掌
+]
+
+def visualize_hand(joints, vertices, original_image, save_path, show_mesh=True):
+    """
+    可视化手部姿态（关节）和网格，并与原始图像拼合后保存。
+    
+    :param joints: 手部关节的3D坐标 (21, 3)
+    :param vertices: 手部网格的3D顶点 (778, 3)
+    :param original_image: 原始输入图像 (H, W, C) numpy数组
+    :param save_path: 保存图像的路径
+    :param show_mesh: 是否展示手部网格
+    """
+    fig = plt.figure(figsize=(12, 6))
+
+    # 子图1：原始图像
+    ax1 = fig.add_subplot(1, 2, 1)
+    ax1.imshow(original_image)
+    ax1.set_title('Original Image')
+    ax1.axis('off')
+
+    # 子图2：手部姿态和网格
+    ax2 = fig.add_subplot(1, 2, 2, projection='3d')
+
+    # 绘制手部关节
+    joints = np.array(joints)
+    ax2.scatter(joints[:, 0], joints[:, 1], joints[:, 2], c='r', label='Joints', s=30)
+    # 绘制关节之间的连线
+    for connection in joint_connections:
+        joint_start = joints[connection[0]]
+        joint_end = joints[connection[1]]
+        ax2.plot([joint_start[0], joint_end[0]],
+                 [joint_start[1], joint_end[1]],
+                 [joint_start[2], joint_end[2]], c='k')
+
+
+    # 绘制手部网格
+    if show_mesh:
+        vertices = np.array(vertices)
+        ax2.scatter(vertices[:, 0], vertices[:, 1], vertices[:, 2], c='b', label='Vertices', s=1)
+    
+    # 设置3D图像的标签
+    ax2.set_xlabel('X')
+    ax2.set_ylabel('Y')
+    ax2.set_zlabel('Z')
+    ax2.set_title('Hand Pose and Mesh Visualization')
+    ax2.legend()
+
+    # 调整布局并保存图像
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close(fig)
 
 def infer_single_json(val_cfg, bmk, model, rot_angle=0):
     dataset = HandMeshEvalDataset(bmk["json_dir"], val_cfg["IMAGE_SHAPE"], bmk["scale_enlarge"], rot_angle=rot_angle)
     sampler = SequentialSampler(dataset)
     dataloader = DataLoader(dataset, sampler=sampler, batch_size=val_cfg["BATCH_SIZE"], num_workers=4, timeout=60)
-        
+    # 定义图像转换，将Tensor转换为PIL图像
+    to_pil = transforms.ToPILImage()
+
     HAND_WORLD_LEN = 0.2
     ROOT_INDEX = _CONFIG['DATA'].get('ROOT_INDEX', 9)
         
@@ -190,6 +256,8 @@ def infer_single_json(val_cfg, bmk, model, rot_angle=0):
         for k in batch_data:
             batch_data[k] = batch_data[k].cuda().float()
         image = batch_data['img']
+        ori_img = batch_data['ori_img']
+        sensor_data = Tensor(batch_data['fit_sensor_data']).cuda().float()
         scale = batch_data['scale']
         K = batch_data['K']
         fx = K[:, 0, 0]
@@ -205,7 +273,7 @@ def infer_single_json(val_cfg, bmk, model, rot_angle=0):
         trans_matrix_3d_inv = torch.linalg.inv(trans_matrix_3d)
         
         with torch.no_grad():
-            res = model(image)
+            res = model(image,sensor_data)
             joints = res["joints"]
             uv = res["uv"]
             vertices = res['vertices']
@@ -234,8 +302,20 @@ def infer_single_json(val_cfg, bmk, model, rot_angle=0):
         pred_vertices_list += vertices.cpu().numpy().tolist()
         gt_joints_list += batch_data['xyz'].cpu().numpy().tolist()
         gt_vertices_list += batch_data['vertices'].cpu().numpy().tolist()
-        
-    
+        # 提取并转换原始图像
+        # 假设图像为 [B, C, H, W] 格式
+        img_np = image[0].cpu().numpy() 
+        ori_img_np = ori_img[0].cpu().numpy()
+        img_np = np.transpose(img_np, (1, 2, 0))  # 转换为 [H, W, C]
+        ori_img_np = np.transpose(ori_img_np, (1, 2, 0))  # 转换为 [H, W, C]
+        img_np = (img_np * 255).astype(np.uint8)  # 假设图像已经被归一化到 [0,1]
+        ori_img_np = (ori_img_np * 255).astype(np.uint8)  # 假设图像已经被归一化到 [0,1]
+        output_dir = "/gpfs/public/vl/yzg/proj/simpleHand/eval_show"
+        os.makedirs(output_dir, exist_ok=True)
+        # 调用可视化函数并保存图像
+        save_filename = f"visualization_iter_{cur_iter}_sample_0.png"
+        save_path = os.path.join(output_dir, save_filename)
+        visualize_hand(joints[0].cpu().numpy(), vertices[0].cpu().numpy(), ori_img_np, save_path, show_mesh=True)
     return pred_uv_list, pred_joints_list, pred_vertices_list, gt_joints_list, gt_vertices_list
 
 

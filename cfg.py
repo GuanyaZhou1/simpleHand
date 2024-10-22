@@ -38,7 +38,7 @@ _CONFIG = dict(
     ),
     DATA=dict(
         IMAGE_SHAPE=[224, 224, 3],
-        DATASET_DIR='/data/FreiHAND/training/rgb/',
+        DATASET_DIR='/gpfs/public/vl/yzg/proj/simpleHand/dataset/training',
         JSON_DIR='dataset/train.json',
         NORMALIZE_3D_GT=False,
         ROOT_INDEX=9,        
@@ -63,7 +63,7 @@ _CONFIG = dict(
     ),
     TRAIN=dict(
         DATALOADER=dict(
-            MINIBATCH_SIZE_PER_DIVICE=32,
+            MINIBATCH_SIZE_PER_DIVICE=64,
             MINIBATCH_PER_EPOCH=256,
             NAME="train"
         ),
@@ -86,7 +86,7 @@ _CONFIG = dict(
         BMK=dict(
             name="FreiHand",
 			json_dir='dataset/eval.json',
-            eval_dir="/data/FreiHAND/evaluation/rgb/",
+            eval_dir="/gpfs/public/vl/yzg/proj/simpleHand/dataset/evaluation",
             scale_enlarge=1.25,
             ),
         IMAGE_SHAPE=(224, 224),

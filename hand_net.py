@@ -35,8 +35,10 @@ class HandNet(nn.Module):
 
         uv_cfg = model_cfg['UV_HEAD']
         depth_cfg = model_cfg['DEPTH_HEAD']
+        self.sensor_fc = nn.Linear(8,64) #处理8维传感器数据
 
-        self.keypoints_2d_head = nn.Linear(uv_cfg['in_features'], uv_cfg['out_features'])
+        #self.keypoints_2d_head = nn.Linear(uv_cfg['in_features'], uv_cfg['out_features'])
+        self.keypoints_2d_head = nn.Linear(uv_cfg['in_features']+64, uv_cfg['out_features'])
         # self.depth_head = nn.Linear(depth_cfg['in_features'], depth_cfg['out_features'])
         
         mesh_head_cfg = model_cfg["MESH_HEAD"].copy()
@@ -57,7 +59,7 @@ class HandNet(nn.Module):
         
 
 
-    def infer(self, image):
+    def infer(self, image,sensor_data):
         if self.is_hiera:
             x, intermediates = self.backbone(image, return_intermediates=True)
             features = intermediates[-1]
@@ -66,7 +68,12 @@ class HandNet(nn.Module):
             features = self.backbone.forward_features(image)
         
         global_feature = self.avg_pool(features).squeeze(-1).squeeze(-1)
-        uv = self.keypoints_2d_head(global_feature)     
+
+        # 处理传感器数据并且与全局特征融合
+        sensor_feature = self.sensor_fc(sensor_data)
+        combined_feature = torch.cat([global_feature, sensor_feature], dim=1)
+
+        uv = self.keypoints_2d_head(combined_feature)     # global_feature
         # depth = self.depth_head(global_feature)
         
         vertices = self.mesh_head(features, uv)
@@ -80,7 +87,7 @@ class HandNet(nn.Module):
         }
 
 
-    def forward(self, image, target=None):
+    def forward(self, image,sensor_data, target=None):
         """get training loss
 
         Args:
@@ -98,7 +105,7 @@ class HandNet(nn.Module):
             }     
         """
         image = image / 255 - 0.5
-        output_dict = self.infer(image)
+        output_dict = self.infer(image,sensor_data)
         if self.training:
             assert target is not None
             loss_dict = self._cal_single_hand_losses(output_dict, target)

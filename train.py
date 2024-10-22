@@ -201,6 +201,10 @@ class Trainer:
         image = Tensor(batch_data['img']).cuda(self.local_rank).float()
         del batch_data['img']
 
+        # 处理传感器数据
+        sensor_data = Tensor(batch_data['fit_sensor_data']).cuda(self.local_rank).float()
+        del batch_data['fit_sensor_data']  # 删除传感器数据以避免后续操作出错
+
         for k in batch_data:
             batch_data[k] = Tensor(batch_data[k]).cuda(self.local_rank).float()
 
@@ -208,7 +212,7 @@ class Trainer:
         
         self.optimizer.zero_grad()
         with torch.autocast(device_type='cuda', dtype=torch.float16):
-            losses = self.model(image, batch_data)
+            losses = self.model(image,sensor_data, batch_data)
             loss = losses['total_loss']
         self.grad_scaler.scale(loss).backward()
         if self.cfg['TRAIN'].get("CLIP_GRAD", None) is not None:
